@@ -201,6 +201,7 @@ function renderAccountCard(u, t, isLookup = false) {
     }
     
     const avatarImg = u.avatarUrl ? u.avatarUrl : 'https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png';
+    const robuxText = (t.robux !== null && t.robux !== undefined) ? t.robux + ' R$' : 'N/A (Butuh Cookie)';
 
     return `
         <div class="profile-header">
@@ -213,12 +214,12 @@ function renderAccountCard(u, t, isLookup = false) {
         <div class="grid-info">
             <div class="info-box">
                 <h4>Account</h4>
-                <div class="info-row"><span>Age</span><span>${u.ageDays || 'N/A'} Days</span></div>
+                <div class="info-row"><span>Age</span><span>${u.ageDays || 'N/A'}</span></div>
                 <div class="info-row"><span>Banned</span><span style="color:${u.isBanned ? 'var(--danger)' : 'var(--success)'}">${u.isBanned ? 'YES' : 'NO'}</span></div>
             </div>
             <div class="info-box">
                 <h4>Telemetry</h4>
-                <div class="info-row"><span>Robux</span><span style="color:var(--success)">${t.robux !== null ? t.robux + ' R$' : 'N/A'}</span></div>
+                <div class="info-row"><span>Robux</span><span style="color:var(--success)">${robuxText}</span></div>
                 <div class="info-row"><span>Premium</span><span>${t.premium ? 'ACTIVE' : 'NO'}</span></div>
                 <div class="info-row"><span>RAP Total</span><span>${t.rap} R$</span></div>
                 <div class="info-row"><span>Limiteds</span><span>${t.limitedCount} items</span></div>
