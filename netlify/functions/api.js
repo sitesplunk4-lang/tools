@@ -9,13 +9,9 @@ app.use(express.json());
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-// Fungsi buat bersihin cookie (buang _|WARNING kalau ada, atau bersihin spasi)
 const cleanCookie = (cookie) => {
     if (!cookie) return '';
-    let c = cookie.trim();
-    // Kalau ada _|WARNING di depan, biarin aja (Roblox butuh ini)
-    // Tapi kalau cuma potongan, tetep kita kirim apa adanya.
-    return c;
+    return cookie.trim();
 };
 
 const makeHeaders = (cookie) => ({
@@ -28,7 +24,6 @@ const router = express.Router();
 
 router.post('/check-cookie', async (req, res) => {
     const { cookie } = req.body;
-    // Cek minimal panjang cookie, jangan cek format WARNING
     if (!cookie || cookie.length < 50) {
         return res.status(400).json({ valid: false, error: 'Cookie terlalu pendek / kosong.' });
     }
@@ -39,7 +34,8 @@ router.post('/check-cookie', async (req, res) => {
         const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 8000 });
         const user = authRes.data;
         
-        let robux = null, premium = false, spend = 0;
+        // 1. Robux & Premium
+        let robux = null, premium = false;
         try {
             const r = await axios.get(`https://economy.roblox.com/v1/users/${user.id}/currency`, { headers, timeout: 6000 });
             robux = r.data.robux;
@@ -48,17 +44,36 @@ router.post('/check-cookie', async (req, res) => {
             const r = await axios.get(`https://premiumfeatures.roblox.com/v1/users/${user.id}/validate-membership`, { headers, timeout: 6000 });
             premium = r.data === true || r.data?.isPremium === true;
         } catch (e) {}
+
+        // 2. Spend (1 Tahun)
+        let spend = 0;
         try {
             const r = await axios.get(`https://economy.roblox.com/v2/users/${user.id}/transaction-totals?timeFrame=Year&transactionType=Summary`, { headers, timeout: 6000 });
             spend = r.data?.purchasesTotal || 0;
         } catch (e) {}
 
-        const detail = await axios.get(`https://users.roblox.com/v1/users/${user.id}`, { headers, timeout: 6000 });
-        const created = new Date(detail.data.createdAt);
-        const ageDays = Math.floor((Date.now() - created.getTime()) / 86400000);
+        // 3. Detail Akun
+        let ageDays = 0, ageYears = "0.00", isBanned = false, createdAt = null;
+        try {
+            const detail = await axios.get(`https://users.roblox.com/v1/users/${user.id}`, { headers, timeout: 6000 });
+            createdAt = detail.data.createdAt;
+            isBanned = detail.data.isBanned || false;
+        } catch (e) {
+            try {
+                const pubDetail = await axios.get(`https://api.roblox.com/users/${user.id}`, { timeout: 6000 });
+                createdAt = pubDetail.data.Created;
+                isBanned = pubDetail.data.IsBanned || false;
+            } catch (err) {}
+        }
         
+        if (createdAt) {
+            const created = new Date(createdAt);
+            ageDays = Math.floor((Date.now() - created.getTime()) / 86400000);
+            ageYears = (ageDays / 365).toFixed(2);
+        }
+
+        // 4. Inventory (Limited & RAP) - Termasuk Offsale!
         let rap = 0, limitedCount = 0, topLimited = [];
-        
         try {
             const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${user.id}/inventory/3?limit=100&sortOrder=Desc`, { headers, timeout: 8000 });
             const assets = invRes.data?.data || [];
@@ -67,15 +82,24 @@ router.post('/check-cookie', async (req, res) => {
                 const batch = assets.slice(i, i + 10);
                 await Promise.all(batch.map(async (a) => {
                     try {
+                        // Ambil detail aset
                         const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.assetId}/details`, { headers, timeout: 5000 });
                         const data = detRes.data;
                         
+                        // Cek apakah Limited atau LimitedUnique
                         if (data.IsLimited || data.IsLimitedUnique) {
                             limitedCount++;
-                            const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.assetId}/resale-data`, { headers, timeout: 5000 });
-                            const itemRap = rapRes.data?.recentAveragePrice || 0;
+                            let itemRap = 0;
+                            
+                            // Coba ambil RAP (kalau ada)
+                            try {
+                                const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.assetId}/resale-data`, { headers, timeout: 5000 });
+                                itemRap = rapRes.data?.recentAveragePrice || 0;
+                            } catch (e) {}
+
                             rap += itemRap;
                             
+                            // Masukin ke list top limited (maks 6)
                             if (topLimited.length < 6) {
                                 topLimited.push({
                                     name: data.Name,
@@ -89,10 +113,19 @@ router.post('/check-cookie', async (req, res) => {
             }
         } catch (e) {}
 
+        // 5. Top Games (Recently Played / Favorites)
         let topGames = [];
         try {
-            const gamesRes = await axios.get(`https://games.roblox.com/v2/users/${user.id}/games?accessFilter=Public&limit=6&sortOrder=Desc`, { headers, timeout: 8000 });
-            const games = gamesRes.data?.data || [];
+            // Coba ambil dari "Recently Played" (Game yang baru dimainkan)
+            const recentRes = await axios.get(`https://games.roblox.com/v2/users/${user.id}/games?accessFilter=Public&limit=6&sortOrder=Desc`, { headers, timeout: 8000 });
+            let games = recentRes.data?.data || [];
+            
+            // Kalau kosong, coba ambil dari Favorites
+            if (games.length === 0) {
+                const favRes = await axios.get(`https://games.roblox.com/v2/users/${user.id}/favorite/games?limit=6`, { headers, timeout: 8000 });
+                games = favRes.data?.data || [];
+            }
+
             topGames = games.map(g => ({
                 name: g.name,
                 placeId: g.id,
@@ -102,7 +135,10 @@ router.post('/check-cookie', async (req, res) => {
 
         res.json({
             valid: true,
-            user: { id: user.id, name: user.name, displayName: user.displayName, created: detail.data.createdAt, ageDays, ageYears: (ageDays / 365).toFixed(2), isBanned: detail.data.isBanned || false },
+            user: { 
+                id: user.id, name: user.name, displayName: user.displayName, 
+                created: createdAt, ageDays, ageYears, isBanned 
+            },
             telemetry: { robux, premium, spend, rap, limitedCount, topLimited, topGames }
         });
     } catch (e) {
@@ -111,7 +147,7 @@ router.post('/check-cookie', async (req, res) => {
     }
 });
 
-// Mass Check, Refresh, Tax, Lookup, Bypass
+// (Fungsi Mass Check, Refresh, Tax, Lookup, Bypass tetap sama)
 router.post('/mass-check', async (req, res) => {
     const { cookies } = req.body;
     if (!Array.isArray(cookies) || cookies.length === 0) return res.status(400).json({ error: 'Kirim array cookies.' });
