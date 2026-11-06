@@ -23,13 +23,11 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
     let rap = 0, limitedCount = 0, topLimited = [];
     let avatarUrl = null;
 
-    // 1. Ambil Avatar URL
+    // 1. Avatar & Detail User
     try {
         const thumbRes = await axios.get(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=false`, { timeout: 6000 });
         if (thumbRes.data?.data?.length > 0) avatarUrl = thumbRes.data.data[0].imageUrl;
     } catch (e) {}
-
-    // 2. Detail Akun & Umur
     try {
         const detail = await axios.get(`https://users.roblox.com/v1/users/${userId}`, { headers, timeout: 6000 });
         const created = new Date(detail.data.createdAt);
@@ -43,11 +41,11 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
         } catch (err) {}
     }
     
-    // 3. Robux & Premium (Khusus Checker pakai cookie)
+    // 2. Robux & Premium
     try { const r = await axios.get(`https://economy.roblox.com/v1/users/${userId}/currency`, { headers, timeout: 6000 }); robux = r.data.robux; } catch (e) {}
     try { const r = await axios.get(`https://premiumfeatures.roblox.com/v1/users/${userId}/validate-membership`, { headers, timeout: 6000 }); premium = r.data === true || r.data?.isPremium === true; } catch (e) {}
 
-    // 4. JALUR CHECKER (Pakai Cookie - Inventory Full)
+    // 3. JALUR CHECKER (Pakai Cookie - Full Inventory)
     if (headers.Cookie) {
         try {
             const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${userId}/inventory/3?limit=100&sortOrder=Desc`, { headers, timeout: 8000 });
@@ -62,41 +60,71 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
                             let itemRap = 0;
                             try { const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.assetId}/resale-data`, { headers, timeout: 5000 }); itemRap = rapRes.data?.recentAveragePrice || 0; } catch (e) {}
                             rap += itemRap;
-                            if (topLimited.length < 6) topLimited.push({ name: detRes.data.Name, rap: itemRap, image: `https://www.roblox.com/asset-thumbnail/image?assetId=${a.assetId}&width=150&height=150&format=png` });
+                            if (topLimited.length < 6) {
+                                let imgUrl = `https://www.roblox.com/asset-thumbnail/image?assetId=${a.assetId}&width=150&height=150&format=png`;
+                                try { const tRes = await axios.get(`https://thumbnails.roblox.com/v1/assets?assetIds=${a.assetId}&size=150x150&format=Png`, { timeout: 5000 }); if (tRes.data?.data?.length > 0) imgUrl = tRes.data.data[0].imageUrl; } catch (e) {}
+                                topLimited.push({ name: detRes.data.Name, rap: itemRap, image: imgUrl });
+                            }
                         }
                     } catch (e) {}
                 }));
             }
         } catch (e) {}
     } 
-    // 5. JALUR LOOKUP (Tanpa Cookie - Trik Avatar 3D)
+    // 4. JALUR LOOKUP (TANPA COOKIE - TRIK SCRAPING HTML PROFIL)
     else {
         try {
-            // Ambil data avatar user (item apa aja yang lagi dipakai)
-            const avatarRes = await axios.get(`https://avatar.roblox.com/v1/users/${userId}/avatar`, { headers: { 'User-Agent': UA }, timeout: 8000 });
-            const assets = avatarRes.data?.assets || [];
+            // Ambil halaman HTML profil user
+            const profileRes = await axios.get(`https://www.roblox.com/users/${userId}/profile`, { headers: { 'User-Agent': UA }, timeout: 8000 });
+            const html = profileRes.data;
             
-            // Loop item yang dipakai
-            for (const a of assets) {
-                try {
-                    const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.id}/details`, { headers: { 'User-Agent': UA }, timeout: 5000 });
-                    const data = detRes.data;
-                    
-                    if (data.IsLimited || data.IsLimitedUnique) {
+            // Cari data JSON tersembunyi di dalam HTML
+            const match = html.match(/data-inventory-tab="true" data-inventory="(.*?)"/);
+            if (match && match[1]) {
+                const invData = JSON.parse(match[1].replace(/&quot;/g, '"'));
+                const assets = invData?.data || [];
+                
+                for (const a of assets) {
+                    if (a.IsLimited || a.IsLimitedUnique) {
                         limitedCount++;
-                        let itemRap = 0;
-                        try { const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.id}/resale-data`, { headers: { 'User-Agent': UA }, timeout: 5000 }); itemRap = rapRes.data?.recentAveragePrice || 0; } catch (e) {}
+                        let itemRap = a.RecentAveragePrice || 0;
                         rap += itemRap;
+                        
                         if (topLimited.length < 6) {
-                            topLimited.push({ name: data.Name, rap: itemRap, image: `https://www.roblox.com/asset-thumbnail/image?assetId=${a.id}&width=150&height=150&format=png` });
+                            let imgUrl = `https://www.roblox.com/asset-thumbnail/image?assetId=${a.AssetId}&width=150&height=150&format=png`;
+                            try { const tRes = await axios.get(`https://thumbnails.roblox.com/v1/assets?assetIds=${a.AssetId}&size=150x150&format=Png`, { timeout: 5000 }); if (tRes.data?.data?.length > 0) imgUrl = tRes.data.data[0].imageUrl; } catch (e) {}
+                            
+                            topLimited.push({ name: a.Name, rap: itemRap, image: imgUrl });
                         }
                     }
-                } catch (e) {}
+                }
             }
-        } catch (e) {}
+        } catch (e) {
+            // Fallback kalau scraping diblokir, balik pakai trik Avatar 3D
+            try {
+                const avatarRes = await axios.get(`https://avatar.roblox.com/v1/users/${userId}/avatar`, { headers: { 'User-Agent': UA }, timeout: 8000 });
+                const assets = avatarRes.data?.assets || [];
+                for (const a of assets) {
+                    try {
+                        const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.id}/details`, { headers: { 'User-Agent': UA }, timeout: 5000 });
+                        if (detRes.data.IsLimited || detRes.data.IsLimitedUnique) {
+                            limitedCount++;
+                            let itemRap = 0;
+                            try { const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.id}/resale-data`, { headers: { 'User-Agent': UA }, timeout: 5000 }); itemRap = rapRes.data?.recentAveragePrice || 0; } catch (e) {}
+                            rap += itemRap;
+                            if (topLimited.length < 6) {
+                                let imgUrl = `https://www.roblox.com/asset-thumbnail/image?assetId=${a.id}&width=150&height=150&format=png`;
+                                try { const tRes = await axios.get(`https://thumbnails.roblox.com/v1/assets?assetIds=${a.id}&size=150x150&format=Png`, { timeout: 5000 }); if (tRes.data?.data?.length > 0) imgUrl = tRes.data.data[0].imageUrl; } catch (e) {}
+                                topLimited.push({ name: detRes.data.Name, rap: itemRap, image: imgUrl });
+                            }
+                        }
+                    } catch (e) {}
+                }
+            } catch (err) {}
+        }
     }
 
-    // 6. Top Games (Hanya narik yang buat game / favorit)
+    // 5. Top Games
     let topGames = [];
     try {
         const gamesRes = await axios.get(`https://games.roblox.com/v2/users/${userId}/games?accessFilter=Public&limit=6&sortOrder=Desc`, { headers, timeout: 8000 });
@@ -111,7 +139,7 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
     return { ageDays, isBanned, robux, premium, spend, rap, limitedCount, topLimited, topGames, avatarUrl };
 }
 
-// (Endpoint Checker, Lookup, Refresh, Mass, Tax, Bypass SAMA KAYAK SEBELUMNYA)
+// --- ENDPOINTS ---
 router.post('/check-cookie', async (req, res) => {
     const { cookie } = req.body;
     if (!cookie || cookie.length < 50) return res.status(400).json({ valid: false, error: 'Cookie terlalu pendek.' });
