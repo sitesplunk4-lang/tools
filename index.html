@@ -200,7 +200,6 @@ function renderAccountCard(u, t, isLookup = false) {
         gamesHtml = `<div style="font-size:12px; color:var(--muted);">Data game tidak tersedia.</div>`;
     }
     
-    // Fallback avatar kalau u.avatarUrl kosong
     const avatarImg = u.avatarUrl ? u.avatarUrl : 'https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png';
 
     return `
