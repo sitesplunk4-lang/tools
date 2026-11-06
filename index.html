@@ -37,7 +37,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; padding: 40
 .panel.active { display: block; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-textarea, input[type="text"], input[type="number"] { width: 100%; background: #000; border: 1px solid var(--border); border-radius: 8px; padding: 14px; color: var(--text); font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; outline: none; margin-bottom: 14px; transition: border-color 0.2s; }
+textarea, input[type="text"], input[type="number"], input[type="password"] { width: 100%; background: #000; border: 1px solid var(--border); border-radius: 8px; padding: 14px; color: var(--text); font-family: 'Consolas', monospace; font-size: 13px; resize: vertical; outline: none; margin-bottom: 14px; transition: border-color 0.2s; }
 textarea:focus, input:focus { border-color: #fff; }
 .btn-group { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
 button { padding: 10px 20px; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
@@ -103,6 +103,7 @@ input[type="file"] { display: none; }
         <div class="stat"><div class="num" id="statInvalid" style="color:var(--danger)">0</div><div class="lbl">Invalid</div></div>
         <div class="stat"><div class="num" id="statPremium" style="color:var(--warn)">0</div><div class="lbl">Premium</div></div>
     </div>
+    
     <div class="tabs">
         <div class="tab active" onclick="switchTab('checker', this)">Checker</div>
         <div class="tab" onclick="switchTab('mass', this)">Mass Checker</div>
@@ -110,6 +111,7 @@ input[type="file"] { display: none; }
         <div class="tab" onclick="switchTab('tax', this)">Tax</div>
         <div class="tab" onclick="switchTab('lookup', this)">Lookup</div>
         <div class="tab" onclick="switchTab('bypass', this)">Bypass</div>
+        <div class="tab" onclick="switchTab('changepass', this)">Ganti Pass</div>
     </div>
 
     <div id="panel-checker" class="panel active">
@@ -161,6 +163,15 @@ input[type="file"] { display: none; }
         <div class="btn-group"><button class="btn-warn" onclick="bypassCheck()" style="width:100%;">Coba Bypass</button></div>
         <div id="bypassResult" class="result"></div>
     </div>
+
+    <div id="panel-changepass" class="panel">
+        <div style="display:flex; justify-content:space-between; align-items:center;"><label>.ROBLOSECURITY COOKIE</label><div style="display:flex; gap:6px;"><button class="btn-secondary btn-sm" onclick="pasteText('passCookie')">📋 Paste</button><button class="btn-danger btn-sm" onclick="clearText('passCookie')">✕ Clear</button></div></div>
+        <textarea id="passCookie" rows="2" placeholder="Paste cookie di sini..."></textarea>
+        <label>PASSWORD BARU</label>
+        <input type="password" id="newPassword" placeholder="Minimal 8 karakter...">
+        <div class="btn-group"><button class="btn-primary" onclick="changePassword()" style="width:100%;">Ganti Password & Logout</button></div>
+        <div id="passResult" class="result"></div>
+    </div>
 </div>
 <div class="footer">RizkyTools v2.5</div>
 
@@ -181,24 +192,16 @@ function renderAccountCard(u, t, isLookup = false) {
     let limitedHtml = '';
     if (t.topLimited && t.topLimited.length > 0) {
         limitedHtml = `<div class="telemetry-grid">`;
-        t.topLimited.forEach(item => {
-            limitedHtml += `<div class="telemetry-item"><img src="${item.image}" onerror="this.src='https://www.roblox.com/asset-thumbnail/image?assetId=0&width=150&height=150&format=png'"><div class="name" title="${item.name}">${item.name}</div><div class="price">${item.rap} R$</div></div>`;
-        });
+        t.topLimited.forEach(item => { limitedHtml += `<div class="telemetry-item"><img src="${item.image}" onerror="this.src='https://www.roblox.com/asset-thumbnail/image?assetId=0&width=150&height=150&format=png'"><div class="name" title="${item.name}">${item.name}</div><div class="price">${item.rap} R$</div></div>`; });
         limitedHtml += `</div>`;
-    } else {
-        limitedHtml = `<div style="font-size:12px; color:var(--muted);">Tidak ada limited items terdeteksi.</div>`;
-    }
+    } else { limitedHtml = `<div style="font-size:12px; color:var(--muted);">Tidak ada limited items terdeteksi.</div>`; }
 
     let gamesHtml = '';
     if (t.topGames && t.topGames.length > 0) {
         gamesHtml = `<div class="telemetry-grid">`;
-        t.topGames.forEach(g => {
-            gamesHtml += `<div class="telemetry-item"><img src="${g.image}" onerror="this.style.display='none'"><div class="name" title="${g.name}">${g.name}</div></div>`;
-        });
+        t.topGames.forEach(g => { gamesHtml += `<div class="telemetry-item"><img src="${g.image}" onerror="this.style.display='none'"><div class="name" title="${g.name}">${g.name}</div></div>`; });
         gamesHtml += `</div>`;
-    } else {
-        gamesHtml = `<div style="font-size:12px; color:var(--muted);">Data game tidak tersedia.</div>`;
-    }
+    } else { gamesHtml = `<div style="font-size:12px; color:var(--muted);">Data game tidak tersedia.</div>`; }
     
     const avatarImg = u.avatarUrl ? u.avatarUrl : 'https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png';
     const robuxText = (t.robux !== null && t.robux !== undefined) ? t.robux + ' R$' : 'N/A (Butuh Cookie)';
@@ -206,10 +209,7 @@ function renderAccountCard(u, t, isLookup = false) {
     return `
         <div class="profile-header">
             <img src="${avatarImg}" class="avatar-img" onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png'">
-            <div class="profile-info">
-                <h2>${u.name}</h2>
-                <p>${u.displayName} • ID: ${u.id}</p>
-            </div>
+            <div class="profile-info"><h2>${u.name}</h2><p>${u.displayName} • ID: ${u.id}</p></div>
         </div>
         <div class="grid-info">
             <div class="info-box">
@@ -225,10 +225,8 @@ function renderAccountCard(u, t, isLookup = false) {
                 <div class="info-row"><span>Limiteds</span><span>${t.limitedCount} items</span></div>
             </div>
         </div>
-        <div class="section-title">Top Limited Items</div>
-        ${limitedHtml}
-        <div class="section-title">Top Games</div>
-        ${gamesHtml}
+        <div class="section-title">Top Limited Items</div>${limitedHtml}
+        <div class="section-title">Top Games</div>${gamesHtml}
     `;
 }
 
@@ -309,10 +307,7 @@ async function refreshCookie() {
         let out = `
             <div class="profile-header">
                 <img src="${avatarImg}" class="avatar-img" onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png'">
-                <div class="profile-info">
-                    <h2>${data.user.name}</h2>
-                    <p>${data.user.displayName}</p>
-                </div>
+                <div class="profile-info"><h2>${data.user.name}</h2><p>${data.user.displayName}</p></div>
             </div>
             <div style="color:var(--success); font-weight:700; margin-bottom:12px;">✅ COOKIE REFRESHED</div>
             <div style="font-size:12px; color:var(--muted); margin-top:10px;">New Cookie:</div>
@@ -365,6 +360,35 @@ async function bypassCheck() {
         if (data.success) { show(resultDiv, 'valid', `✅ SUCCESS\nProxy : ${data.usedProxy}\nStatus: ${data.status}\nData  : ${JSON.stringify(data.data, null, 2)}`); toast('Bypass berhasil!', 'success'); }
         else { show(resultDiv, 'invalid', `❌ FAILED\nProxy : ${data.usedProxy}\nError : ${data.error}`); toast('Bypass gagal', 'error'); }
     } catch (e) { show(resultDiv, 'invalid', '❌ Server error.'); }
+}
+
+async function changePassword() {
+    const cookie = document.getElementById('passCookie').value.trim();
+    const newPassword = document.getElementById('newPassword').value.trim();
+    const resultDiv = document.getElementById('passResult');
+    if (!cookie) return toast('Cookie kosong!', 'error');
+    if (newPassword.length < 8) return toast('Password minimal 8 karakter!', 'error');
+
+    show(resultDiv, '', '<div style="color:var(--muted); text-align:center;">Memproses ganti password...</div>', true);
+    
+    try {
+        const res = await fetch(`${API_BASE}/change-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cookie, newPassword })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            show(resultDiv, 'valid', `✅ BERHASIL\n\nPassword akun berhasil diganti menjadi: ${newPassword}\n\n(Catatan: Semua session lama telah di-logout untuk keamanan.)`);
+            toast('Password berhasil diganti!', 'success');
+        } else {
+            show(resultDiv, 'invalid', `❌ GAGAL\n\n${data.error}`);
+            toast('Gagal ganti password', 'error');
+        }
+    } catch (e) {
+        show(resultDiv, 'invalid', '❌ Server error.');
+    }
 }
 </script>
 </body>
