@@ -71,56 +71,53 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
             }
         } catch (e) {}
     } 
-    // 4. JALUR LOOKUP (TANPA COOKIE - TRIK SCRAPING HTML PROFIL)
+    // 4. JALUR LOOKUP (TANPA COOKIE)
     else {
+        // 4A. PRIORITAS UTAMA: Trik Avatar 3D (Biar item yang dipakai PASTI muncul)
         try {
-            // Ambil halaman HTML profil user
-            const profileRes = await axios.get(`https://www.roblox.com/users/${userId}/profile`, { headers: { 'User-Agent': UA }, timeout: 8000 });
-            const html = profileRes.data;
-            
-            // Cari data JSON tersembunyi di dalam HTML
-            const match = html.match(/data-inventory-tab="true" data-inventory="(.*?)"/);
-            if (match && match[1]) {
-                const invData = JSON.parse(match[1].replace(/&quot;/g, '"'));
-                const assets = invData?.data || [];
-                
-                for (const a of assets) {
-                    if (a.IsLimited || a.IsLimitedUnique) {
+            const avatarRes = await axios.get(`https://avatar.roblox.com/v1/users/${userId}/avatar`, { headers: { 'User-Agent': UA }, timeout: 8000 });
+            const assets = avatarRes.data?.assets || [];
+            for (const a of assets) {
+                try {
+                    const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.id}/details`, { headers: { 'User-Agent': UA }, timeout: 5000 });
+                    if (detRes.data.IsLimited || detRes.data.IsLimitedUnique) {
                         limitedCount++;
-                        let itemRap = a.RecentAveragePrice || 0;
+                        let itemRap = 0;
+                        try { const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.id}/resale-data`, { headers: { 'User-Agent': UA }, timeout: 5000 }); itemRap = rapRes.data?.recentAveragePrice || 0; } catch (e) {}
                         rap += itemRap;
-                        
                         if (topLimited.length < 6) {
-                            let imgUrl = `https://www.roblox.com/asset-thumbnail/image?assetId=${a.AssetId}&width=150&height=150&format=png`;
-                            try { const tRes = await axios.get(`https://thumbnails.roblox.com/v1/assets?assetIds=${a.AssetId}&size=150x150&format=Png`, { timeout: 5000 }); if (tRes.data?.data?.length > 0) imgUrl = tRes.data.data[0].imageUrl; } catch (e) {}
-                            
-                            topLimited.push({ name: a.Name, rap: itemRap, image: imgUrl });
+                            let imgUrl = `https://www.roblox.com/asset-thumbnail/image?assetId=${a.id}&width=150&height=150&format=png`;
+                            try { const tRes = await axios.get(`https://thumbnails.roblox.com/v1/assets?assetIds=${a.id}&size=150x150&format=Png`, { timeout: 5000 }); if (tRes.data?.data?.length > 0) imgUrl = tRes.data.data[0].imageUrl; } catch (e) {}
+                            topLimited.push({ name: detRes.data.Name, rap: itemRap, image: imgUrl });
+                        }
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+
+        // 4B. FALLBACK: Trik Scraping HTML (Kalau Avatar 3D kosong, cari di inventory)
+        if (topLimited.length === 0) {
+            try {
+                const profileRes = await axios.get(`https://www.roblox.com/users/${userId}/profile`, { headers: { 'User-Agent': UA }, timeout: 8000 });
+                const html = profileRes.data;
+                const match = html.match(/data-inventory-tab="true" data-inventory="(.*?)"/);
+                if (match && match[1]) {
+                    const invData = JSON.parse(match[1].replace(/&quot;/g, '"'));
+                    const assets = invData?.data || [];
+                    for (const a of assets) {
+                        if (a.IsLimited || a.IsLimitedUnique) {
+                            limitedCount++;
+                            let itemRap = a.RecentAveragePrice || 0;
+                            rap += itemRap;
+                            if (topLimited.length < 6) {
+                                let imgUrl = `https://www.roblox.com/asset-thumbnail/image?assetId=${a.AssetId}&width=150&height=150&format=png`;
+                                try { const tRes = await axios.get(`https://thumbnails.roblox.com/v1/assets?assetIds=${a.AssetId}&size=150x150&format=Png`, { timeout: 5000 }); if (tRes.data?.data?.length > 0) imgUrl = tRes.data.data[0].imageUrl; } catch (e) {}
+                                topLimited.push({ name: a.Name, rap: itemRap, image: imgUrl });
+                            }
                         }
                     }
                 }
-            }
-        } catch (e) {
-            // Fallback kalau scraping diblokir, balik pakai trik Avatar 3D
-            try {
-                const avatarRes = await axios.get(`https://avatar.roblox.com/v1/users/${userId}/avatar`, { headers: { 'User-Agent': UA }, timeout: 8000 });
-                const assets = avatarRes.data?.assets || [];
-                for (const a of assets) {
-                    try {
-                        const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.id}/details`, { headers: { 'User-Agent': UA }, timeout: 5000 });
-                        if (detRes.data.IsLimited || detRes.data.IsLimitedUnique) {
-                            limitedCount++;
-                            let itemRap = 0;
-                            try { const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.id}/resale-data`, { headers: { 'User-Agent': UA }, timeout: 5000 }); itemRap = rapRes.data?.recentAveragePrice || 0; } catch (e) {}
-                            rap += itemRap;
-                            if (topLimited.length < 6) {
-                                let imgUrl = `https://www.roblox.com/asset-thumbnail/image?assetId=${a.id}&width=150&height=150&format=png`;
-                                try { const tRes = await axios.get(`https://thumbnails.roblox.com/v1/assets?assetIds=${a.id}&size=150x150&format=Png`, { timeout: 5000 }); if (tRes.data?.data?.length > 0) imgUrl = tRes.data.data[0].imageUrl; } catch (e) {}
-                                topLimited.push({ name: detRes.data.Name, rap: itemRap, image: imgUrl });
-                            }
-                        }
-                    } catch (e) {}
-                }
-            } catch (err) {}
+            } catch (e) {}
         }
     }
 
