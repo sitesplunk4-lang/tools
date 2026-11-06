@@ -16,24 +16,8 @@
     --danger: #ef4444;
     --warn: #f59e0b;
 }
-body {
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 40px 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-.console {
-    width: 1000px;
-    max-width: 100%;
-    background: var(--panel);
-    border-radius: 16px;
-    border: 1px solid var(--border);
-    padding: 32px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.9);
-}
+body { background: var(--bg); color: var(--text); min-height: 100vh; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; }
+.console { width: 1000px; max-width: 100%; background: var(--panel); border-radius: 16px; border: 1px solid var(--border); padding: 32px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.9); }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 14px; }
 .logo { width: 44px; height: 44px; background: #000; border: 1px solid #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; font-size: 16px; letter-spacing: -0.5px; }
@@ -71,7 +55,6 @@ button { padding: 10px 20px; border: none; border-radius: 8px; font-weight: 600;
 .result.valid { border-color: var(--success); }
 .result.invalid { border-color: var(--danger); }
 
-/* AVATAR STYLING */
 .profile-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .avatar-img { width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--border); object-fit: cover; background: #111; }
 .profile-info h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
@@ -194,10 +177,7 @@ function show(el, cls, htmlOrText, isHtml = false) { el.style.display = 'block';
 function toast(msg, type) { const c = document.getElementById('toastContainer'); const t = document.createElement('div'); t.className = 'toast ' + (type || ''); t.textContent = msg; c.appendChild(t); setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 0.3s'; setTimeout(() => t.remove(), 300); }, 3000); }
 function updateStats(total, valid, invalid, premium) { document.getElementById('statTotal').textContent = total; document.getElementById('statValid').textContent = valid; document.getElementById('statInvalid').textContent = invalid; document.getElementById('statPremium').textContent = premium || 0; }
 
-// FUNGSI RENDER KARTU (SEKARANG ADA FOTO PROFIL)
 function renderAccountCard(u, t, isLookup = false) {
-    const avatarUrl = `https://www.roblox.com/headshot-thumbnail/image?userId=${u.id}&width=150&height=150&format=png`;
-    
     let limitedHtml = '';
     if (t.topLimited && t.topLimited.length > 0) {
         limitedHtml = `<div class="telemetry-grid">`;
@@ -219,10 +199,13 @@ function renderAccountCard(u, t, isLookup = false) {
     } else {
         gamesHtml = `<div style="font-size:12px; color:var(--muted);">Data game tidak tersedia.</div>`;
     }
+    
+    // Fallback avatar kalau u.avatarUrl kosong
+    const avatarImg = u.avatarUrl ? u.avatarUrl : 'https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png';
 
     return `
         <div class="profile-header">
-            <img src="${avatarUrl}" class="avatar-img" onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png'">
+            <img src="${avatarImg}" class="avatar-img" onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png'">
             <div class="profile-info">
                 <h2>${u.name}</h2>
                 <p>${u.displayName} • ID: ${u.id}</p>
@@ -321,11 +304,11 @@ async function refreshCookie() {
         if (data.error) return show(resultDiv, 'invalid', `❌ ${data.error}`);
         
         lastRefreshedCookie = data.newCookie || cookie;
-        const avatarUrl = `https://www.roblox.com/headshot-thumbnail/image?userId=${data.user.id}&width=150&height=150&format=png`;
+        const avatarImg = data.user.avatarUrl ? data.user.avatarUrl : 'https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png';
         
         let out = `
             <div class="profile-header">
-                <img src="${avatarUrl}" class="avatar-img" onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png'">
+                <img src="${avatarImg}" class="avatar-img" onerror="this.src='https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png'">
                 <div class="profile-info">
                     <h2>${data.user.name}</h2>
                     <p>${data.user.displayName}</p>
@@ -363,7 +346,7 @@ async function lookupUser() {
         const data = await res.json();
         if (data.error) return show(resultDiv, 'invalid', `❌ ${data.error}`);
         
-        const u = { id: data.id, name: data.name, displayName: data.displayName, ageDays: data.ageDays, isBanned: data.isBanned };
+        const u = { id: data.id, name: data.name, displayName: data.displayName, ageDays: data.ageDays, isBanned: data.isBanned, avatarUrl: data.avatarUrl };
         const t = { robux: data.telemetry?.robux, premium: data.telemetry?.premium, spend: 0, rap: data.telemetry?.rap, limitedCount: data.telemetry?.limitedCount, topLimited: data.telemetry?.topLimited, topGames: data.telemetry?.topGames };
         
         show(resultDiv, 'valid', renderAccountCard(u, t, true), true);
