@@ -1,4 +1,3 @@
-// netlify/functions/api.js
 const express = require('express');
 const serverless = require('serverless-http');
 const axios = require('axios');
@@ -17,20 +16,20 @@ const makeHeaders = (cookie) => ({
 
 const router = express.Router();
 
-// --- CHECK COOKIE ---
 router.post('/check-cookie', async (req, res) => {
     const { cookie } = req.body;
     if (!cookie || !cookie.startsWith('_|WARNING')) return res.status(400).json({ valid: false, error: 'Format invalid.' });
     const headers = makeHeaders(cookie);
+    
     try {
         const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 10000 });
         const user = authRes.data;
         
-        let robux = null, robuxError = null;
+        let robux = null;
         try {
             const r = await axios.get(`https://economy.roblox.com/v1/users/${user.id}/currency`, { headers, timeout: 10000 });
             robux = r.data.robux;
-        } catch (e) { robuxError = e.response?.status || 'ERR'; }
+        } catch (e) {}
         
         let premium = false;
         try {
@@ -38,30 +37,50 @@ router.post('/check-cookie', async (req, res) => {
             premium = r.data === true || r.data?.isPremium === true;
         } catch (e) {}
         
+        let spend = 0;
+        try {
+            const r = await axios.get(`https://economy.roblox.com/v2/users/${user.id}/transaction-totals?timeFrame=Year&transactionType=Summary`, { headers, timeout: 10000 });
+            spend = r.data?.purchasesTotal || 0;
+        } catch (e) {}
+
         const detail = await axios.get(`https://users.roblox.com/v1/users/${user.id}`, { headers, timeout: 10000 });
         const created = new Date(detail.data.createdAt);
         const ageDays = Math.floor((Date.now() - created.getTime()) / 86400000);
         
-        let rap = null, rapError = null;
+        let rap = 0, limitedCount = 0, effectCount = 0;
         try {
-            const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${user.id}/inventory/3?limit=100&sortOrder=Asc`, { headers, timeout: 15000 });
-            const assets = invRes.data?.data || [];
-            let totalRap = 0;
-            for (let i = 0; i < assets.length; i += 10) {
-                const batch = assets.slice(i, i + 10);
-                const results = await Promise.all(batch.map(async (a) => {
-                    try { const r = await axios.get(`https://economy.roblox.com/v1/assets/${a.assetId}/resale-data`, { headers, timeout: 10000 }); return r.data?.recentAveragePrice || 0; } 
-                    catch (e) { return 0; }
-                }));
-                totalRap += results.reduce((s, v) => s + v, 0);
+            let cursor = '';
+            let pages = 0;
+            while (pages < 5) { // Max 500 item biar gak timeout
+                const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${user.id}/inventory/3?limit=100&sortOrder=Asc${cursor ? '&cursor=' + cursor : ''}`, { headers, timeout: 10000 });
+                const assets = invRes.data?.data || [];
+                if (assets.length === 0) break;
+                
+                for (let i = 0; i < assets.length; i += 10) {
+                    const batch = assets.slice(i, i + 10);
+                    await Promise.all(batch.map(async (a) => {
+                        try {
+                            const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.assetId}/details`, { headers, timeout: 8000 });
+                            const data = detRes.data;
+                            
+                            if (data.IsLimited || data.IsLimitedUnique) limitedCount++;
+                            if (data.AssetTypeId === 10 || data.AssetTypeId === 8 || data.AssetTypeId === 41) effectCount++;
+                            
+                            const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.assetId}/resale-data`, { headers, timeout: 8000 });
+                            rap += rapRes.data?.recentAveragePrice || 0;
+                        } catch (e) {}
+                    }));
+                }
+                cursor = invRes.data?.nextPageCursor;
+                if (!cursor) break;
+                pages++;
             }
-            rap = totalRap;
-        } catch (e) { rapError = e.response?.status || 'ERR'; }
-        
+        } catch (e) {}
+
         res.json({
             valid: true,
             user: { id: user.id, name: user.name, displayName: user.displayName, created: detail.data.createdAt, ageDays, ageYears: (ageDays / 365).toFixed(2), description: detail.data.description || '(kosong)', isBanned: detail.data.isBanned || false },
-            telemetry: { robux, robuxError, premium, rap, rapError }
+            telemetry: { robux, premium, spend, rap, limitedCount, effectCount }
         });
     } catch (e) {
         if (e.response && (e.response.status === 401 || e.response.status === 403)) return res.status(401).json({ valid: false, error: 'Cookie invalid / expired.' });
@@ -69,7 +88,6 @@ router.post('/check-cookie', async (req, res) => {
     }
 });
 
-// --- MASS CHECK ---
 router.post('/mass-check', async (req, res) => {
     const { cookies } = req.body;
     if (!Array.isArray(cookies) || cookies.length === 0) return res.status(400).json({ error: 'Kirim array cookies.' });
@@ -97,26 +115,6 @@ router.post('/mass-check', async (req, res) => {
     res.json({ total: cookies.length, validCount: results.filter(r => r.valid).length, invalidCount: results.filter(r => !r.valid).length, results });
 });
 
-// --- GROUP CHECK ---
-router.post('/group-check', async (req, res) => {
-    const { cookie } = req.body;
-    if (!cookie) return res.status(400).json({ error: 'Cookie kosong' });
-    const headers = makeHeaders(cookie);
-    try {
-        const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 10000 });
-        const userId = authRes.data.id;
-        const groupsRes = await axios.get(`https://groups.roblox.com/v2/users/${userId}/groups/roles`, { headers, timeout: 15000 });
-        const groups = groupsRes.data?.data || [];
-        const owned = [], joined = [];
-        for (const g of groups) {
-            const entry = { id: g.group.id, name: g.group.name, role: g.role.name, rank: g.role.rank, memberCount: g.group.memberCount || 0 };
-            if (g.role.name.toLowerCase() === 'owner' || g.role.rank === 255) owned.push(entry); else joined.push(entry);
-        }
-        res.json({ total: groups.length, ownedCount: owned.length, owned, joined });
-    } catch (e) { res.status(500).json({ error: 'Gagal ambil grup.' }); }
-});
-
-// --- REFRESH COOKIE ---
 router.post('/refresh-cookie', async (req, res) => {
     const { cookie } = req.body;
     if (!cookie) return res.status(400).json({ error: 'Cookie kosong' });
@@ -125,12 +123,15 @@ router.post('/refresh-cookie', async (req, res) => {
         const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 10000 });
         const setCookie = authRes.headers['set-cookie'];
         let newCookie = null;
-        if (setCookie) { for (const c of setCookie) { if (c.startsWith('.ROBLOSECURITY=')) { newCookie = c.split(';')[0].replace('.ROBLOSECURITY=', ''); break; } } }
+        if (setCookie) { 
+            for (const c of setCookie) { 
+                if (c.startsWith('.ROBLOSECURITY=')) { newCookie = c.split(';')[0].replace('.ROBLOSECURITY=', ''); break; } 
+            } 
+        }
         res.json({ refreshed: true, newCookie: newCookie || cookie, sameAsOld: newCookie === cookie || !newCookie, user: { id: authRes.data.id, name: authRes.data.name, displayName: authRes.data.displayName } });
     } catch (e) { res.status(401).json({ refreshed: false, error: 'Cookie invalid / expired.' }); }
 });
 
-// --- TAX ---
 router.post('/tax', (req, res) => {
     const { amount, mode } = req.body;
     if (!amount || amount <= 0) return res.status(400).json({ error: 'Jumlah tidak valid' });
@@ -140,7 +141,6 @@ router.post('/tax', (req, res) => {
     res.json(result);
 });
 
-// --- LOOKUP ---
 router.post('/lookup', async (req, res) => {
     const { username } = req.body;
     if (!username) return res.status(400).json({ error: 'Username kosong' });
@@ -155,7 +155,6 @@ router.post('/lookup', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Lookup gagal.' }); }
 });
 
-// --- BYPASS ---
 router.post('/bypass-check', async (req, res) => {
     const { cookie, target } = req.body;
     if (!cookie) return res.status(400).json({ error: 'Cookie kosong' });
@@ -171,5 +170,4 @@ router.post('/bypass-check', async (req, res) => {
 
 app.use('/.netlify/functions/api', router);
 app.use('/api', router);
-
 module.exports.handler = serverless(app);
