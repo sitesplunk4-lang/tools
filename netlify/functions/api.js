@@ -21,18 +21,38 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
     let ageDays = 0, isBanned = false;
     let robux = null, premium = false, spend = 0;
     let rap = 0, limitedCount = 0, topLimited = [];
+    let avatarUrl = null;
 
+    // 1. Ambil Avatar URL via API Thumbnails (Biar gambarnya muncul)
+    try {
+        const thumbRes = await axios.get(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=false`, { timeout: 6000 });
+        if (thumbRes.data && thumbRes.data.data && thumbRes.data.data.length > 0) {
+            avatarUrl = thumbRes.data.data[0].imageUrl;
+        }
+    } catch (e) {}
+
+    // 2. Detail Akun
     try {
         const detail = await axios.get(`https://users.roblox.com/v1/users/${userId}`, { headers, timeout: 6000 });
         const created = new Date(detail.data.createdAt);
         ageDays = Math.floor((Date.now() - created.getTime()) / 86400000);
         isBanned = detail.data.isBanned || false;
-    } catch (e) {}
+    } catch (e) {
+        // Fallback API kalau diblokir
+        try {
+            const altDetail = await axios.get(`https://api.roblox.com/users/${userId}`, { timeout: 6000 });
+            const created = new Date(altDetail.data.Created);
+            ageDays = Math.floor((Date.now() - created.getTime()) / 86400000);
+            isBanned = altDetail.data.IsBanned || false;
+        } catch (err) {}
+    }
     
+    // 3. Robux & Premium
     try { const r = await axios.get(`https://economy.roblox.com/v1/users/${userId}/currency`, { headers, timeout: 6000 }); robux = r.data.robux; } catch (e) {}
     try { const r = await axios.get(`https://premiumfeatures.roblox.com/v1/users/${userId}/validate-membership`, { headers, timeout: 6000 }); premium = r.data === true || r.data?.isPremium === true; } catch (e) {}
     try { const r = await axios.get(`https://economy.roblox.com/v2/users/${userId}/transaction-totals?timeFrame=Year&transactionType=Summary`, { headers, timeout: 6000 }); spend = r.data?.purchasesTotal || 0; } catch (e) {}
 
+    // 4. Inventory (Khusus Checker)
     if (headers.Cookie) {
         try {
             const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${userId}/inventory/3?limit=100&sortOrder=Desc`, { headers, timeout: 8000 });
@@ -59,6 +79,7 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
         } catch (e) {}
     }
 
+    // 5. Trik Scraping Lookup (tanpa Cookie)
     if (!headers.Cookie) {
         try {
             const profileRes = await axios.get(`https://www.roblox.com/users/${userId}/profile`, { headers: { 'User-Agent': UA }, timeout: 8000 });
@@ -81,6 +102,7 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
         } catch (e) {}
     }
 
+    // 6. Top Games
     let topGames = [];
     try {
         const gamesRes = await axios.get(`https://games.roblox.com/v2/users/${userId}/games?accessFilter=Public&limit=6&sortOrder=Desc`, { headers, timeout: 8000 });
@@ -92,7 +114,7 @@ async function fetchUserData(userId, headers = { 'User-Agent': UA }) {
         topGames = games.map(g => ({ name: g.name, placeId: g.id, image: `https://www.roblox.com/place-thumbnails?params=%5B%7B%22placeId%22%3A${g.id}%7D%5D` }));
     } catch (e) {}
 
-    return { ageDays, isBanned, robux, premium, spend, rap, limitedCount, topLimited, topGames };
+    return { ageDays, isBanned, robux, premium, spend, rap, limitedCount, topLimited, topGames, avatarUrl };
 }
 
 router.post('/check-cookie', async (req, res) => {
@@ -106,7 +128,7 @@ router.post('/check-cookie', async (req, res) => {
         
         res.json({
             valid: true,
-            user: { id: user.id, name: user.name, displayName: user.displayName, ageDays: data.ageDays, isBanned: data.isBanned },
+            user: { id: user.id, name: user.name, displayName: user.displayName, ageDays: data.ageDays, isBanned: data.isBanned, avatarUrl: data.avatarUrl },
             telemetry: { robux: data.robux, premium: data.premium, spend: data.spend, rap: data.rap, limitedCount: data.limitedCount, topLimited: data.topLimited, topGames: data.topGames }
         });
     } catch (e) {
@@ -128,7 +150,7 @@ router.post('/lookup', async (req, res) => {
         
         res.json({ 
             id: u.id, name: u.name, displayName: u.displayName, 
-            ageDays: data.ageDays, isBanned: data.isBanned,
+            ageDays: data.ageDays, isBanned: data.isBanned, avatarUrl: data.avatarUrl,
             telemetry: { robux: data.robux, premium: data.premium, rap: data.rap, limitedCount: data.limitedCount, topLimited: data.topLimited, topGames: data.topGames }
         });
     } catch (e) { res.status(500).json({ error: 'Lookup gagal.' }); }
@@ -143,10 +165,14 @@ router.post('/refresh-cookie', async (req, res) => {
         const setCookie = authRes.headers['set-cookie'];
         let newCookie = null;
         if (setCookie) { for (const c of setCookie) { if (c.startsWith('.ROBLOSECURITY=')) { newCookie = c.split(';')[0].replace('.ROBLOSECURITY=', ''); break; } } }
-        res.json({ refreshed: true, newCookie: newCookie || cookie, sameAsOld: newCookie === cookie || !newCookie, user: { id: authRes.data.id, name: authRes.data.name, displayName: authRes.data.displayName } });
+        
+        const data = await fetchUserData(authRes.data.id, headers);
+        
+        res.json({ refreshed: true, newCookie: newCookie || cookie, sameAsOld: newCookie === cookie || !newCookie, user: { id: authRes.data.id, name: authRes.data.name, displayName: authRes.data.displayName, avatarUrl: data.avatarUrl } });
     } catch (e) { res.status(401).json({ refreshed: false, error: 'Cookie invalid / expired.' }); }
 });
 
+// Mass, Tax, Bypass (Sama kayak sebelumnya)
 router.post('/mass-check', async (req, res) => {
     const { cookies } = req.body;
     if (!Array.isArray(cookies) || cookies.length === 0) return res.status(400).json({ error: 'Kirim array cookies.' });
