@@ -22,65 +22,78 @@ router.post('/check-cookie', async (req, res) => {
     const headers = makeHeaders(cookie);
     
     try {
-        const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 10000 });
+        const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 8000 });
         const user = authRes.data;
         
-        let robux = null;
+        let robux = null, premium = false, spend = 0;
         try {
-            const r = await axios.get(`https://economy.roblox.com/v1/users/${user.id}/currency`, { headers, timeout: 10000 });
+            const r = await axios.get(`https://economy.roblox.com/v1/users/${user.id}/currency`, { headers, timeout: 6000 });
             robux = r.data.robux;
         } catch (e) {}
-        
-        let premium = false;
         try {
-            const r = await axios.get(`https://premiumfeatures.roblox.com/v1/users/${user.id}/validate-membership`, { headers, timeout: 10000 });
+            const r = await axios.get(`https://premiumfeatures.roblox.com/v1/users/${user.id}/validate-membership`, { headers, timeout: 6000 });
             premium = r.data === true || r.data?.isPremium === true;
         } catch (e) {}
-        
-        let spend = 0;
         try {
-            const r = await axios.get(`https://economy.roblox.com/v2/users/${user.id}/transaction-totals?timeFrame=Year&transactionType=Summary`, { headers, timeout: 10000 });
+            const r = await axios.get(`https://economy.roblox.com/v2/users/${user.id}/transaction-totals?timeFrame=Year&transactionType=Summary`, { headers, timeout: 6000 });
             spend = r.data?.purchasesTotal || 0;
         } catch (e) {}
 
-        const detail = await axios.get(`https://users.roblox.com/v1/users/${user.id}`, { headers, timeout: 10000 });
+        const detail = await axios.get(`https://users.roblox.com/v1/users/${user.id}`, { headers, timeout: 6000 });
         const created = new Date(detail.data.createdAt);
         const ageDays = Math.floor((Date.now() - created.getTime()) / 86400000);
         
-        let rap = 0, limitedCount = 0, effectCount = 0;
+        let rap = 0, limitedCount = 0, topLimited = [];
+        
+        // 1. Ambil Inventory (Max 100 item biar gak timeout)
         try {
-            let cursor = '';
-            let pages = 0;
-            while (pages < 5) { // Max 500 item biar gak timeout
-                const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${user.id}/inventory/3?limit=100&sortOrder=Asc${cursor ? '&cursor=' + cursor : ''}`, { headers, timeout: 10000 });
-                const assets = invRes.data?.data || [];
-                if (assets.length === 0) break;
-                
-                for (let i = 0; i < assets.length; i += 10) {
-                    const batch = assets.slice(i, i + 10);
-                    await Promise.all(batch.map(async (a) => {
-                        try {
-                            const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.assetId}/details`, { headers, timeout: 8000 });
-                            const data = detRes.data;
+            const invRes = await axios.get(`https://inventory.roblox.com/v2/users/${user.id}/inventory/3?limit=100&sortOrder=Desc`, { headers, timeout: 8000 });
+            const assets = invRes.data?.data || [];
+            
+            // Ambil detail aset (batched 10)
+            for (let i = 0; i < assets.length; i += 10) {
+                const batch = assets.slice(i, i + 10);
+                await Promise.all(batch.map(async (a) => {
+                    try {
+                        const detRes = await axios.get(`https://economy.roblox.com/v2/assets/${a.assetId}/details`, { headers, timeout: 5000 });
+                        const data = detRes.data;
+                        
+                        if (data.IsLimited || data.IsLimitedUnique) {
+                            limitedCount++;
+                            const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.assetId}/resale-data`, { headers, timeout: 5000 });
+                            const itemRap = rapRes.data?.recentAveragePrice || 0;
+                            rap += itemRap;
                             
-                            if (data.IsLimited || data.IsLimitedUnique) limitedCount++;
-                            if (data.AssetTypeId === 10 || data.AssetTypeId === 8 || data.AssetTypeId === 41) effectCount++;
-                            
-                            const rapRes = await axios.get(`https://economy.roblox.com/v1/assets/${a.assetId}/resale-data`, { headers, timeout: 8000 });
-                            rap += rapRes.data?.recentAveragePrice || 0;
-                        } catch (e) {}
-                    }));
-                }
-                cursor = invRes.data?.nextPageCursor;
-                if (!cursor) break;
-                pages++;
+                            // Simpan top limited buat ditampilin gambarnya
+                            if (topLimited.length < 5) {
+                                topLimited.push({
+                                    name: data.Name,
+                                    rap: itemRap,
+                                    image: `https://www.roblox.com/asset-thumbnail/image?assetId=${a.assetId}&width=150&height=150&format=png`
+                                });
+                            }
+                        }
+                    } catch (e) {}
+                }));
             }
+        } catch (e) {}
+
+        // 2. Ambil Top Games (Playtime & Spend)
+        let topGames = [];
+        try {
+            const gamesRes = await axios.get(`https://games.roblox.com/v2/users/${user.id}/games?accessFilter=Public&limit=5&sortOrder=Desc`, { headers, timeout: 8000 });
+            const games = gamesRes.data?.data || [];
+            topGames = games.map(g => ({
+                name: g.name,
+                placeId: g.id,
+                image: `https://www.roblox.com/place-thumbnails?params=%5B%7B%22placeId%22%3A${g.id}%7D%5D`
+            }));
         } catch (e) {}
 
         res.json({
             valid: true,
-            user: { id: user.id, name: user.name, displayName: user.displayName, created: detail.data.createdAt, ageDays, ageYears: (ageDays / 365).toFixed(2), description: detail.data.description || '(kosong)', isBanned: detail.data.isBanned || false },
-            telemetry: { robux, premium, spend, rap, limitedCount, effectCount }
+            user: { id: user.id, name: user.name, displayName: user.displayName, created: detail.data.createdAt, ageDays, ageYears: (ageDays / 365).toFixed(2), isBanned: detail.data.isBanned || false },
+            telemetry: { robux, premium, spend, rap, limitedCount, topLimited, topGames }
         });
     } catch (e) {
         if (e.response && (e.response.status === 401 || e.response.status === 403)) return res.status(401).json({ valid: false, error: 'Cookie invalid / expired.' });
@@ -88,6 +101,7 @@ router.post('/check-cookie', async (req, res) => {
     }
 });
 
+// Mass Check, Refresh, Tax, Lookup, Bypass (Sama kayak sebelumnya)
 router.post('/mass-check', async (req, res) => {
     const { cookies } = req.body;
     if (!Array.isArray(cookies) || cookies.length === 0) return res.status(400).json({ error: 'Kirim array cookies.' });
@@ -123,11 +137,7 @@ router.post('/refresh-cookie', async (req, res) => {
         const authRes = await axios.get('https://users.roblox.com/v1/users/authenticated', { headers, timeout: 10000 });
         const setCookie = authRes.headers['set-cookie'];
         let newCookie = null;
-        if (setCookie) { 
-            for (const c of setCookie) { 
-                if (c.startsWith('.ROBLOSECURITY=')) { newCookie = c.split(';')[0].replace('.ROBLOSECURITY=', ''); break; } 
-            } 
-        }
+        if (setCookie) { for (const c of setCookie) { if (c.startsWith('.ROBLOSECURITY=')) { newCookie = c.split(';')[0].replace('.ROBLOSECURITY=', ''); break; } } }
         res.json({ refreshed: true, newCookie: newCookie || cookie, sameAsOld: newCookie === cookie || !newCookie, user: { id: authRes.data.id, name: authRes.data.name, displayName: authRes.data.displayName } });
     } catch (e) { res.status(401).json({ refreshed: false, error: 'Cookie invalid / expired.' }); }
 });
